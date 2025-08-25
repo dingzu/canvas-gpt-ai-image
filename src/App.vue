@@ -149,7 +149,7 @@
     <AIGenerateDialog 
       v-if="showAIPanel" 
       :canvas="canvas"
-      @close="showAIPanel = false"
+      @close="() => { showAIPanel = false; keyboardEventsEnabled = true }"
       @generate="handleAIGenerate"
     />
 
@@ -237,6 +237,9 @@ export default {
     const isDragging = ref(false)
     const showAIPanel = ref(false)
     const showApiKeyDialog = ref(false)
+    
+    // 快捷键状态管理
+    const keyboardEventsEnabled = ref(true)
     const bubbles = ref([])
     const brushColor = ref('#000000')
     const brushSize = ref(3)
@@ -424,7 +427,7 @@ export default {
     const setupGlobalKeyEvents = () => {
       // 监听空格键按下和释放
       document.addEventListener('keydown', (e) => {
-        if (e.code === 'Space' && !e.repeat) {
+        if (e.code === 'Space' && !e.repeat && keyboardEventsEnabled.value) {
           e.preventDefault()
           isSpacePressed = true
           if (canvas.value) {
@@ -435,7 +438,7 @@ export default {
       })
 
       document.addEventListener('keyup', (e) => {
-        if (e.code === 'Space') {
+        if (e.code === 'Space' && keyboardEventsEnabled.value) {
           e.preventDefault()
           isSpacePressed = false
           isPanning = false
@@ -451,6 +454,11 @@ export default {
 
     // 键盘事件处理
     const handleKeyDown = (e) => {
+      // 如果快捷键被禁用，则忽略所有快捷键
+      if (!keyboardEventsEnabled.value) {
+        return
+      }
+      
       // Delete 键删除选中对象
       if (e.key === 'Delete' || e.key === 'Backspace') {
         deleteSelected()
@@ -930,6 +938,7 @@ export default {
     const handleAIGenerate = async (params) => {
       try {
         showAIPanel.value = false
+        keyboardEventsEnabled.value = true
         
         // 创建加载矩形
         const centerX = canvas.value.width / 2
@@ -1183,6 +1192,7 @@ export default {
         saveAs(dataBlob, `ai-whiteboard-data-${timestamp}.json`)
         
         showAIPanel.value = false
+        keyboardEventsEnabled.value = true
         alert(`AI数据已生成并下载完成！\n- 智能内容截图 (仅包含有内容区域)\n- 结构化数据文件 (JSON)\n- 截图尺寸: ${contentBounds.width}x${contentBounds.height}px`)
       } catch (error) {
         console.error('生成AI数据失败:', error)
@@ -1216,6 +1226,7 @@ export default {
       currentTool,
       isDragging,
       showAIPanel,
+      keyboardEventsEnabled,
       bubbles,
       brushColor,
       brushSize,
@@ -1252,6 +1263,8 @@ export default {
       handleAIButtonClick: () => {
         // 直接打开AI面板，不再咨询API密钥
         showAIPanel.value = true
+        // 禁用快捷键
+        keyboardEventsEnabled.value = false
       },
       
       // API密钥管理

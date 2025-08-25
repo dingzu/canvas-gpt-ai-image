@@ -1,5 +1,5 @@
 <template>
-  <div class="overlay" @click="handleOverlayClick">
+  <div class="overlay">
     <div class="ai-dialog" @click.stop>
       <div class="dialog-header">
         <h3>AI 图像生成</h3>
@@ -25,7 +25,7 @@
           </div>
           <div class="preview-info">
             <p class="preview-mode">
-              {{ captureMode === 'selected' ? '📌 显示选中对象区域' : '🖼️ 显示所有内容区域' }}
+              📌 显示选中对象区域
             </p>
             <p class="preview-tip">绿色边框表示实际发送给AI的图像范围</p>
             <p v-if="debugInfo" class="debug-info">
@@ -89,15 +89,7 @@
             </div>
           </div>
           
-          <div class="param-row">
-            <div class="param-group">
-              <h4>选择范围</h4>
-              <select v-model="captureMode" class="param-select">
-                <option value="selected">仅选中对象</option>
-                <option value="all">整个画布</option>
-              </select>
-            </div>
-          </div>
+
         </div>
 
         <!-- 操作按钮 -->
@@ -136,7 +128,8 @@ export default {
     const customPrompt = ref('生成一张图片')
     const quality = ref('auto')
     const selectedSize = ref('auto')
-    const captureMode = ref('selected')
+    // 固定为仅选中对象模式
+    const captureMode = 'selected'
     const isGenerating = ref(false)
     const tempApiKey = ref('')
     const hasApiKey = ref(false)
@@ -155,11 +148,11 @@ export default {
       
       const canvasElement = props.canvas.getElement()
       
-      if (captureMode.value === 'selected') {
-        // 获取选中的对象
-        const activeObjects = props.canvas.getActiveObjects()
+      if (captureMode === 'selected') {
+        // 获取当前选中的对象或选择组
+        const activeObject = props.canvas.getActiveObject()
         
-        if (activeObjects.length === 0) {
+        if (!activeObject) {
           // 没有选中对象，使用整个画布
           return {
             left: 0,
@@ -169,32 +162,72 @@ export default {
           }
         }
         
-        // 计算所有选中对象的包围盒
-        let minX = Number.MAX_SAFE_INTEGER
-        let minY = Number.MAX_SAFE_INTEGER
-        let maxX = Number.MIN_SAFE_INTEGER
-        let maxY = Number.MIN_SAFE_INTEGER
+        // 获取选中对象（单个或组合）的包围盒
+        // 这里直接使用 activeObject.getBoundingRect() 
+        // 无论是单选还是多选（ActiveSelection），都能正确计算边界
+        const bounds = activeObject.getBoundingRect()
         
-        activeObjects.forEach(obj => {
-          const bounds = obj.getBoundingRect()
-          minX = Math.min(minX, bounds.left)
-          minY = Math.min(minY, bounds.top)
-          maxX = Math.max(maxX, bounds.left + bounds.width)
-          maxY = Math.max(maxY, bounds.top + bounds.height)
-        })
+        console.log('=== 选中对象边界信息 ===')
+        console.log('Active object type:', activeObject.type)
+        console.log('Is ActiveSelection:', activeObject.type === 'activeSelection')
+        console.log('Bounding rect:', bounds)
+        
+        // 如果是 ActiveSelection，也记录一下子对象的边界作为对比
+        if (activeObject.type === 'activeSelection') {
+          const objects = activeObject.getObjects()
+          console.log('ActiveSelection contains', objects.length, 'objects')
+          
+          // 手动计算一下子对象的总边界作为验证
+          let manualMinX = Number.MAX_SAFE_INTEGER
+          let manualMinY = Number.MAX_SAFE_INTEGER  
+          let manualMaxX = Number.MIN_SAFE_INTEGER
+          let manualMaxY = Number.MIN_SAFE_INTEGER
+          
+          objects.forEach((obj, index) => {
+            const objBounds = obj.getBoundingRect()
+            console.log(`Object ${index} (${obj.type}):`, objBounds)
+            
+            manualMinX = Math.min(manualMinX, objBounds.left)
+            manualMinY = Math.min(manualMinY, objBounds.top)
+            manualMaxX = Math.max(manualMaxX, objBounds.left + objBounds.width)
+            manualMaxY = Math.max(manualMaxY, objBounds.top + objBounds.height)
+          })
+          
+          const manualBounds = {
+            left: manualMinX,
+            top: manualMinY,
+            width: manualMaxX - manualMinX,
+            height: manualMaxY - manualMinY
+          }
+          
+          console.log('Manual calculation bounds:', manualBounds)
+          console.log('Bounds comparison:', {
+            'getBoundingRect()': bounds,
+            'manual calculation': manualBounds,
+            'difference': {
+              left: Math.abs(bounds.left - manualBounds.left),
+              top: Math.abs(bounds.top - manualBounds.top),
+              width: Math.abs(bounds.width - manualBounds.width),
+              height: Math.abs(bounds.height - manualBounds.height)
+            }
+          })
+        }
         
         // 确保边界不超出画布
-        const left = Math.max(0, Math.floor(minX))
-        const top = Math.max(0, Math.floor(minY))
-        const right = Math.min(props.canvas.getWidth(), Math.ceil(maxX))
-        const bottom = Math.min(props.canvas.getHeight(), Math.ceil(maxY))
+        const left = Math.max(0, Math.floor(bounds.left))
+        const top = Math.max(0, Math.floor(bounds.top))
+        const right = Math.min(props.canvas.getWidth(), Math.ceil(bounds.left + bounds.width))
+        const bottom = Math.min(props.canvas.getHeight(), Math.ceil(bounds.top + bounds.height))
         
-        return {
+        const result = {
           left,
           top,
           width: right - left,
           height: bottom - top
         }
+        
+        console.log('Calculated capture area:', result)
+        return result
       } else {
         // 所有内容模式：获取画布上所有对象的包围盒
         const allObjects = props.canvas.getObjects().filter(obj => 
@@ -295,6 +328,26 @@ export default {
         console.log('Preview canvas size:', previewWidth, 'x', previewHeight)
         console.log('Content bounds:', contentBounds)
         
+        // 检查当前选中状态
+        const activeObject = props.canvas.getActiveObject()
+        if (activeObject) {
+          console.log('Active object info:', {
+            type: activeObject.type,
+            isActiveSelection: activeObject.type === 'activeSelection',
+            objectCount: activeObject.type === 'activeSelection' ? activeObject.size() : 1
+          })
+          
+          if (activeObject.type === 'activeSelection') {
+            console.log('ActiveSelection objects:', activeObject.getObjects().map(obj => ({
+              type: obj.type,
+              left: obj.left,
+              top: obj.top,
+              width: obj.width,
+              height: obj.height
+            })))
+          }
+        }
+        
         // 更新调试信息
         debugInfo.value = {
           left: contentBounds.left,
@@ -304,7 +357,7 @@ export default {
         }
         
         // 使用Fabric.js的toDataURL方法获取正确的截取内容
-        const dataURL = props.canvas.toDataURL({
+        const toDataURLOptions = {
           format: 'png',
           quality: 1,
           left: contentBounds.left,
@@ -312,7 +365,10 @@ export default {
           width: contentBounds.width,
           height: contentBounds.height,
           multiplier: 1
-        })
+        }
+        
+        console.log('toDataURL options:', toDataURLOptions)
+        const dataURL = props.canvas.toDataURL(toDataURLOptions)
         
         // 创建图像对象
         const img = new Image()
@@ -344,7 +400,8 @@ export default {
             scaledWidth,
             scaledHeight,
             offsetX,
-            offsetY
+            offsetY,
+            drawRegion: `x:${offsetX}, y:${offsetY}, w:${scaledWidth}, h:${scaledHeight}`
           })
           
           // 绘制从Fabric.js获取的正确图像，保持宽高比
@@ -363,12 +420,7 @@ export default {
       }
     }
 
-    // 处理弹窗背景点击
-    const handleOverlayClick = (e) => {
-      if (e.target.classList.contains('overlay')) {
-        emit('close')
-      }
-    }
+
 
     // 检查API密钥状态
     const checkApiKeyStatus = () => {
@@ -423,8 +475,7 @@ export default {
             
             // 生成文件名
             const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
-            const mode = captureMode.value === 'selected' ? 'selected' : 'all'
-            a.download = `canvas-crop-${mode}-${timestamp}.png`
+            a.download = `canvas-crop-selected-${timestamp}.png`
             
             document.body.appendChild(a)
             a.click()
@@ -476,7 +527,7 @@ export default {
           prompt: finalPrompt.value,
           quality: quality.value,
           outputSize: outputSize.value,
-          captureMode: captureMode.value
+          captureMode: captureMode
         }
 
         // 触发生成事件
@@ -490,12 +541,7 @@ export default {
       }
     }
 
-    // 监听选择范围变化，实时更新预览
-    watch(captureMode, () => {
-      nextTick(() => {
-        generatePreview()
-      })
-    })
+
 
     onMounted(() => {
       nextTick(() => {
@@ -570,7 +616,6 @@ export default {
       finalPrompt,
       quality,
       selectedSize,
-      captureMode,
       isGenerating,
       tempApiKey,
       hasApiKey,
@@ -578,7 +623,6 @@ export default {
       previewWidth,
       previewHeight,
       outputSize,
-      handleOverlayClick,
       handleGenerate,
       saveApiKey,
       downloadCroppedImage
