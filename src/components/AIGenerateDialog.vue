@@ -25,7 +25,7 @@
           </div>
           <div class="preview-info">
             <p class="preview-mode">
-              📌 显示选中对象区域
+              {{ currentSelectionMode }}
             </p>
             <p class="preview-tip">绿色边框表示实际发送给AI的图像范围</p>
             <p v-if="debugInfo" class="debug-info">
@@ -153,13 +153,76 @@ export default {
         const activeObject = props.canvas.getActiveObject()
         
         if (!activeObject) {
-          // 没有选中对象，使用整个画布
-          return {
-            left: 0,
-            top: 0,
-            width: props.canvas.getWidth(),
-            height: props.canvas.getHeight()
+          // 没有选中对象，自动计算所有可见对象的包围盒
+          console.log('=== 没有选中对象，自动计算所有可见元素 ===')
+          
+          const allObjects = props.canvas.getObjects().filter(obj => 
+            obj.visible !== false && 
+            obj.customType !== 'ai-details-button' &&
+            obj.customType !== 'ai-loading'
+          )
+          
+          console.log('Found', allObjects.length, 'visible objects')
+          
+          if (allObjects.length === 0) {
+            // 没有任何对象，返回画布中心的默认区域，而不是整个画布
+            console.log('No objects found, using center default area instead of full canvas')
+            const canvasWidth = props.canvas.getWidth()
+            const canvasHeight = props.canvas.getHeight()
+            
+            // 使用画布中心的合理大小区域（比如画布的1/4大小，最小400x300）
+            const defaultWidth = Math.min(400, canvasWidth * 0.5)
+            const defaultHeight = Math.min(300, canvasHeight * 0.5)
+            
+            const result = {
+              left: Math.floor((canvasWidth - defaultWidth) / 2),
+              top: Math.floor((canvasHeight - defaultHeight) / 2),
+              width: defaultWidth,
+              height: defaultHeight
+            }
+            
+            console.log('Default area for empty canvas:', result)
+            return result
           }
+          
+          // 计算所有对象的紧凑包围盒（忽略空白区域）
+          let minX = Number.MAX_SAFE_INTEGER
+          let minY = Number.MAX_SAFE_INTEGER
+          let maxX = Number.MIN_SAFE_INTEGER
+          let maxY = Number.MIN_SAFE_INTEGER
+          
+          allObjects.forEach((obj, index) => {
+            const bounds = obj.getBoundingRect()
+            console.log(`Object ${index} (${obj.type}):`, bounds)
+            
+            minX = Math.min(minX, bounds.left)
+            minY = Math.min(minY, bounds.top)
+            maxX = Math.max(maxX, bounds.left + bounds.width)
+            maxY = Math.max(maxY, bounds.top + bounds.height)
+          })
+          
+          // 添加小量边距以确保内容不会被裁剪到边缘，但保持紧凑
+          const padding = 10  // 10像素的小边距
+          
+          // 确保边界不超出画布，并保持紧凑
+          const left = Math.max(0, Math.floor(minX - padding))
+          const top = Math.max(0, Math.floor(minY - padding))
+          const right = Math.min(props.canvas.getWidth(), Math.ceil(maxX + padding))
+          const bottom = Math.min(props.canvas.getHeight(), Math.ceil(maxY + padding))
+          
+          const result = {
+            left,
+            top,
+            width: right - left,
+            height: bottom - top
+          }
+          
+          console.log('Compact bounds for all objects (with minimal padding):', result)
+          console.log('Saved space compared to full canvas:', {
+            horizontalSaving: `${Math.round((1 - result.width / props.canvas.getWidth()) * 100)}%`,
+            verticalSaving: `${Math.round((1 - result.height / props.canvas.getHeight()) * 100)}%`
+          })
+          return result
         }
         
         // 获取选中对象（单个或组合）的包围盒
@@ -306,6 +369,32 @@ export default {
     // 最终发送的prompt，拼接默认描述词和自定义描述词
     const finalPrompt = computed(() => {
       return `根据图片上的标注生成，${customPrompt.value}`
+    })
+
+    // 当前选择模式的显示文字
+    const currentSelectionMode = computed(() => {
+      if (!props.canvas) return '📌 准备中...'
+      
+      const activeObject = props.canvas.getActiveObject()
+      if (!activeObject) {
+        // 没有选中对象，检查是否有可见对象
+        const allObjects = props.canvas.getObjects().filter(obj => 
+          obj.visible !== false && 
+          obj.customType !== 'ai-details-button' &&
+          obj.customType !== 'ai-loading'
+        )
+        
+        if (allObjects.length === 0) {
+          return '📐 画布中心区域（无内容对象）'
+        } else {
+          return `🔄 自动包含所有对象（${allObjects.length}个）`
+        }
+      } else if (activeObject.type === 'activeSelection') {
+        const count = activeObject.size()
+        return `📌 已选中${count}个对象`
+      } else {
+        return '📌 已选中1个对象'
+      }
     })
 
 
@@ -583,7 +672,9 @@ export default {
             'object:scaled': immediateUpdate,
             'object:rotating': debouncedUpdate,
             'object:rotated': immediateUpdate,
-            'object:modified': immediateUpdate
+            'object:modified': immediateUpdate,
+            'object:added': immediateUpdate,      // 对象添加时更新
+            'object:removed': immediateUpdate     // 对象删除时更新
           }
           
           // 注册事件监听器
@@ -623,6 +714,7 @@ export default {
       previewWidth,
       previewHeight,
       outputSize,
+      currentSelectionMode,
       handleGenerate,
       saveApiKey,
       downloadCroppedImage
